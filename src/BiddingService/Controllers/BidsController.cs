@@ -5,7 +5,6 @@ using BiddingService.Services;
 using Contracts;
 using MassTransit;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Entities;
 
@@ -80,6 +79,17 @@ namespace BiddingService.Controllers
             await _publishEndpoint.Publish(_mapper.Map<BidPlaced>(bid));
 
             return Ok(_mapper.Map<BidDto>(bid));
+        }
+
+        [HttpGet("{auctionId}")]
+        public async Task<ActionResult<List<BidDto>>> GetBidsForAuction(string auctionId)
+        {
+            var bids = await DB.Find<Bid>()
+                .Match(a => a.AuctionId == auctionId)
+                .Sort(b => b.Descending(a => a.BidTime))
+                .ExecuteAsync();
+
+            return bids.Select(_mapper.Map<BidDto>).ToList();
         }
     }
 }

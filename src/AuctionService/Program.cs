@@ -1,22 +1,28 @@
 using AuctionService.Consumers;
 using AuctionService.Data;
 using AuctionService.Data.Context;
+using AuctionService.Services;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using Polly;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-
 builder.Services.AddControllers();
-
+builder.Services.AddDbContext<AuctionDbContext>(opt =>
+{
+    opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
+});
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 builder.Services.AddMassTransit(x =>
 {
     x.AddEntityFrameworkOutbox<AuctionDbContext>(o =>
     {
         o.QueryDelay = TimeSpan.FromSeconds(10);
+
         o.UsePostgres();
         o.UseBusOutbox();
     });
@@ -42,10 +48,6 @@ builder.Services.AddMassTransit(x =>
         cfg.ConfigureEndpoints(context);
     });
 });
-
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-builder.Services.AddDbContext<AuctionDbContext>(options => options.UseNpgsql(connectionString));
-
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -54,24 +56,24 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.TokenValidationParameters.ValidateAudience = false;
         options.TokenValidationParameters.NameClaimType = "username";
     });
-
+builder.Services.AddScoped<IAuctionRepository, AuctionRepository>();
 builder.Services.AddGrpc();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 app.UseAuthentication();
 app.UseAuthorization();
-//app.UseHttpsRedirection();
 
 app.MapControllers();
+app.MapGrpcService<GrpcAuctionService>();
 
-try
-{
-    DbInitializer.InitDb(app);
-} 
-catch(Exception ex)
-{
-    Console.WriteLine(ex.ToString());
-}
+var retryPolicy = Policy
+    .Handle<NpgsqlException>()
+    .WaitAndRetry(5, retryAttempt => TimeSpan.FromSeconds(10));
+
+retryPolicy.ExecuteAndCapture(() => DbInitializer.InitDb(app));
 
 app.Run();
+
+public partial class Program { }
